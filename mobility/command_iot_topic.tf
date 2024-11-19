@@ -69,8 +69,22 @@ resource "aws_security_group" "ec2_sg" {
   }
 
   ingress {
+    from_port   = 8080
+    to_port     = 8080
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
     from_port   = 443
     to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port   = 22
+    to_port     = 22
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
@@ -130,9 +144,10 @@ resource "aws_instance" "ec2_command_topic_1" {
   associate_public_ip_address = true
   vpc_security_group_ids      = [aws_security_group.ec2_sg.id]
   iam_instance_profile        = aws_iam_instance_profile.iot_instance_profile.name
+  key_name                    = "command_key"
 
   tags = {
-    Name = "EC2-Instance-Route1-1"
+    Name = "ec2_command_topic_1"
   }
 }
 
@@ -143,9 +158,10 @@ resource "aws_instance" "ec2_command_topic_2" {
   associate_public_ip_address = true
   vpc_security_group_ids      = [aws_security_group.ec2_sg.id]
   iam_instance_profile        = aws_iam_instance_profile.iot_instance_profile.name
+  key_name                    = "command_key"
 
   tags = {
-    Name = "EC2-Instance-Route1-2"
+    Name = "ec2_command_topic_2"
   }
 }
 
@@ -157,9 +173,10 @@ resource "aws_instance" "ec2_critical_command_topic_1" {
   associate_public_ip_address = true
   vpc_security_group_ids      = [aws_security_group.ec2_sg.id]
   iam_instance_profile        = aws_iam_instance_profile.iot_instance_profile.name
+  key_name                    = "command_key"
 
   tags = {
-    Name = "EC2-Instance-Route2-1"
+    Name = "ec2_critical_command_topic_1"
   }
 }
 
@@ -170,10 +187,66 @@ resource "aws_instance" "ec2_critical_command_topic_2" {
   associate_public_ip_address = true
   vpc_security_group_ids      = [aws_security_group.ec2_sg.id]
   iam_instance_profile        = aws_iam_instance_profile.iot_instance_profile.name
+  key_name                    = "command_key"
 
   tags = {
-    Name = "EC2-Instance-Route2-2"
+    Name = "ec2_critical_command_topic_2"
   }
+}
+
+# 로드 밸런서 및 관련 설정 추가
+resource "aws_lb" "main_lb" {
+  name               = "main-lb"
+  internal           = false
+  load_balancer_type = "application"
+  security_groups    = [aws_security_group.ec2_sg.id]
+  subnets            = [aws_subnet.main_subnet.id, aws_subnet.main_subnet_2.id]
+
+  enable_deletion_protection = false
+}
+
+resource "aws_lb_target_group" "main_target_group" {
+  name     = "main-target-group"
+  port     = 80
+  protocol = "HTTP"
+  vpc_id   = aws_vpc.main_vpc.id
+}
+
+# 로드 밸런서 리스너 추가
+resource "aws_lb_listener" "main_listener" {
+  load_balancer_arn = aws_lb.main_lb.arn
+  port              = 80
+  protocol          = "HTTP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.main_target_group.arn
+  }
+}
+
+# EC2 인스턴스를 로드 밸런서의 대상 그룹에 등록
+resource "aws_lb_target_group_attachment" "ec2_command_topic_1_attach" {
+  target_group_arn = aws_lb_target_group.main_target_group.arn
+  target_id        = aws_instance.ec2_command_topic_1.id
+  port             = 80
+}
+
+resource "aws_lb_target_group_attachment" "ec2_command_topic_2_attach" {
+  target_group_arn = aws_lb_target_group.main_target_group.arn
+  target_id        = aws_instance.ec2_command_topic_2.id
+  port             = 80
+}
+
+resource "aws_lb_target_group_attachment" "ec2_critical_command_topic_1_attach" {
+  target_group_arn = aws_lb_target_group.main_target_group.arn
+  target_id        = aws_instance.ec2_critical_command_topic_1.id
+  port             = 80
+}
+
+resource "aws_lb_target_group_attachment" "ec2_critical_command_topic_2_attach" {
+  target_group_arn = aws_lb_target_group.main_target_group.arn
+  target_id        = aws_instance.ec2_critical_command_topic_2.id
+  port             = 80
 }
 
 # Amazon RDS 생성 (공유)
