@@ -278,18 +278,3 @@ resource "aws_api_gateway_method" "vehicle_method" {
   http_method   = "POST"
   authorization = "NONE"
 }
-
-# Amplify 앱 설정
-resource "aws_amplify_app" "amplify_app" {
-  name        = "vehicle-amplify-app"
-  description = "Amplify app for Vehicle Telemetry Integration"
-
-  environment_variables = {
-    "ENV_VAR" = "value"
-  }
-}
-
-resource "aws_amplify_branch" "main_branch" {
-  app_id      = aws_amplify_app.amplify_app.id
-  branch_name = "main"
-}
