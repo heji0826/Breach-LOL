@@ -102,19 +102,12 @@ resource "aws_subnet" "subnet_a" {
   map_public_ip_on_launch = true
 }
 
-resource "aws_subnet" "subnet_b" {
-  vpc_id                  = aws_vpc.main_vpc.id
-  cidr_block              = "10.0.2.0/24"
-  availability_zone       = "ap-southeast-1b"
-  map_public_ip_on_launch = true
-}
-
 # 네트워크 로드 밸런서 생성
 resource "aws_lb" "nlb" {
   name               = "iot-nlb"
   internal           = false
   load_balancer_type = "network"
-  subnets            = [aws_subnet.subnet_a.id, aws_subnet.subnet_b.id]
+  subnets            = [aws_subnet.subnet_a.id]
 }
 
 # 로드 밸런서 대상 그룹 생성
@@ -143,7 +136,7 @@ resource "aws_lb_target_group_attachment" "nlb_target_group_attachment" {
 resource "aws_instance" "iot_instance" {
   ami           = "ami-047126e50991d067b" # Ubuntu 20.04 LTS
   instance_type = "t2.micro"
-  key_name      = aws_key_pair.ec2_key_pair.key_name # 변경된 부분
+  key_name      = aws_key_pair.ec2_key_pair.key_name 
   vpc_security_group_ids = [aws_security_group.ec2_sg.id]
   subnet_id     = aws_subnet.subnet_a.id
 }
@@ -197,11 +190,6 @@ resource "aws_route_table_association" "subnet_a_association" {
   route_table_id = aws_route_table.main_route_table.id
 }
 
-resource "aws_route_table_association" "subnet_b_association" {
-  subnet_id      = aws_subnet.subnet_b.id
-  route_table_id = aws_route_table.main_route_table.id
-}
-
 # EC2 키 페어 자동 생성 (SSH 접속용)
 resource "tls_private_key" "ec2_key" {
   algorithm = "RSA"
@@ -245,4 +233,79 @@ resource "aws_amplify_app" "amplify_app" {
 resource "aws_amplify_branch" "main_branch" {
   app_id      = aws_amplify_app.amplify_app.id
   branch_name = "main"
+}
+
+# API Gateway 스테이지 생성
+resource "aws_api_gateway_stage" "iot_stage" {
+  stage_name    = "prod"
+  deployment_id = aws_api_gateway_deployment.iot_deployment.id
+  rest_api_id   = aws_api_gateway_rest_api.iot_api.id
+}
+
+# HTTP 엔드포인트 통합
+resource "aws_api_gateway_integration" "iot_integration" {
+  rest_api_id             = aws_api_gateway_rest_api.iot_api.id
+  resource_id             = aws_api_gateway_resource.iot_resource.id
+  http_method             = aws_api_gateway_method.iot_method.http_method
+  integration_http_method = "POST"
+  type                    = "HTTP"
+  uri                     = "http://your-backend-endpoint.example.com"
+}
+
+# API Gateway 배포
+resource "aws_api_gateway_deployment" "iot_deployment" {
+  rest_api_id = aws_api_gateway_rest_api.iot_api.id
+  depends_on  = [aws_api_gateway_integration.iot_integration] # 통합 리소스 의존성 추가
+}
+
+# WAF v2 Web ACL 생성
+resource "aws_wafv2_web_acl" "iot_waf_acl" {
+  name        = "iot-waf-acl"
+  description = "WAF for IoT API Gateway"
+  scope       = "REGIONAL" # Regional 스코프 설정 (API Gateway용)
+
+  default_action {
+    allow {} # 기본적으로 모든 요청 허용
+  }
+
+  visibility_config {
+    cloudwatch_metrics_enabled = true
+    metric_name                = "iot-waf-metrics"
+    sampled_requests_enabled   = true
+  }
+
+  # SQL 인젝션 방지
+  rule {
+    name     = "sql-injection-rule"
+    priority = 1
+
+    statement {
+      sqli_match_statement {
+        field_to_match {
+          body {}
+        }
+
+        text_transformation {
+          priority = 0
+          type     = "URL_DECODE"
+        }
+      }
+    }
+
+    action {
+      block {}
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "sql-injection-rule"
+      sampled_requests_enabled   = true
+    }
+  }
+}
+
+# WAF와 API Gateway 연동
+resource "aws_wafv2_web_acl_association" "iot_waf_association" {
+  resource_arn = aws_api_gateway_stage.iot_stage.arn
+  web_acl_arn  = aws_wafv2_web_acl.iot_waf_acl.arn
 }
