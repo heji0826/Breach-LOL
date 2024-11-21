@@ -133,7 +133,7 @@ resource "aws_instance" "vehicle_ec2" {
   instance_type = "t2.micro"
   key_name      = aws_key_pair.ec2_key_pair.key_name
   vpc_security_group_ids = [aws_security_group.ec2_sg.id]
-  subnet_id            = aws_subnet.subnet_a.id  
+  subnet_id            = aws_subnet.private_subnet_a.id  
 
   tags = {
     Name = "Vehicle-Telemetry-EC2"
@@ -161,6 +161,21 @@ resource "aws_subnet" "subnet_b" {
   cidr_block              = "10.0.2.0/24"
   availability_zone       = data.aws_availability_zones.available.names[1]  # 두 번째 가용 영역
   map_public_ip_on_launch = true
+}
+
+# Private Subnet 정의
+resource "aws_subnet" "private_subnet_a" {
+  vpc_id                  = aws_vpc.main_vpc.id
+  cidr_block              = "10.0.3.0/24"
+  availability_zone       = data.aws_availability_zones.available.names[0]
+  map_public_ip_on_launch = false
+}
+
+resource "aws_subnet" "private_subnet_b" {
+  vpc_id                  = aws_vpc.main_vpc.id
+  cidr_block              = "10.0.4.0/24"
+  availability_zone       = data.aws_availability_zones.available.names[1]
+  map_public_ip_on_launch = false
 }
 
 # Network Load Balancer 생성
@@ -215,7 +230,7 @@ resource "aws_msk_cluster" "vehicle_kafka" {
 
   broker_node_group_info {
     instance_type   = "kafka.m5.large"
-    client_subnets  = [aws_subnet.subnet_a.id, aws_subnet.subnet_b.id]  # 자동으로 서브넷을 사용
+    client_subnets  = [aws_subnet.private_subnet_a.id, aws_subnet.private_subnet_b.id] 
     security_groups = [aws_security_group.ec2_sg.id]
   }
 
