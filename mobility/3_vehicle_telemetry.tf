@@ -278,3 +278,108 @@ resource "aws_api_gateway_method" "vehicle_method" {
   http_method   = "POST"
   authorization = "NONE"
 }
+
+# Mock Integration 설정
+resource "aws_api_gateway_integration" "mock_integration" {
+  rest_api_id             = aws_api_gateway_rest_api.vehicle_api.id
+  resource_id             = aws_api_gateway_resource.vehicle_resource.id
+  http_method             = aws_api_gateway_method.vehicle_method.http_method
+  integration_http_method = "POST"
+  type                    = "MOCK"
+}
+
+# 새로운 배포 리소스
+resource "aws_api_gateway_deployment" "new_deployment" {
+  rest_api_id = aws_api_gateway_rest_api.vehicle_api.id
+
+  triggers = {
+    redeploy = "${timestamp()}"
+  }
+
+  depends_on = [aws_api_gateway_integration.mock_integration]  # Integration이 완료된 후 배포 진행
+}
+
+# WAF v2 Web ACL 생성
+resource "aws_wafv2_web_acl" "vehicle_waf_acl" {
+  name        = "vehicle-waf-acl"
+  description = "WAF for Vehicle API Gateway"
+  scope       = "REGIONAL" # Regional 스코프 설정 (API Gateway용)
+
+  default_action {
+    allow {} # 기본적으로 모든 요청 허용
+  }
+
+  visibility_config {
+    cloudwatch_metrics_enabled = true
+    metric_name                = "vehicle-waf-metrics"
+    sampled_requests_enabled   = true
+  }
+
+  # SQL 인젝션 방지
+  rule {
+    name     = "sql-injection-rule"
+    priority = 1
+
+    statement {
+      sqli_match_statement {
+        field_to_match {
+          body {}
+        }
+
+        text_transformation {
+          priority = 0
+          type     = "URL_DECODE"
+        }
+      }
+    }
+
+    action {
+      block {}
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "sql-injection-rule"
+      sampled_requests_enabled   = true
+    }
+  }
+
+  # XSS 방지 규칙 추가 (예시)
+  rule {
+    name     = "xss-protection-rule"
+    priority = 2
+    statement {
+      xss_match_statement {
+        field_to_match {
+          body {}
+        }
+
+        text_transformation {
+          priority = 0
+          type     = "HTML_ENTITY_DECODE"
+        }
+      }
+    }
+    action {
+      block {}
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "xss-protection-rule"
+      sampled_requests_enabled   = true
+    }
+  }
+}
+
+resource "aws_api_gateway_stage" "vehicle_stage" {
+  stage_name    = "prod"
+  deployment_id = aws_api_gateway_deployment.new_deployment.id
+  rest_api_id   = aws_api_gateway_rest_api.vehicle_api.id
+}
+
+# WAF와 API Gateway 연동
+resource "aws_wafv2_web_acl_association" "vehicle_waf_association" {
+  resource_arn = aws_api_gateway_stage.vehicle_stage.arn  # API Gateway 스테이지 ARN
+  web_acl_arn  = aws_wafv2_web_acl.vehicle_waf_acl.arn
+}
