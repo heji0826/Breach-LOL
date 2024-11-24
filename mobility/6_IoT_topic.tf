@@ -102,6 +102,46 @@ resource "aws_subnet" "subnet_a" {
   map_public_ip_on_launch = true
 }
 
+# Private Subnet 생성
+resource "aws_subnet" "private_subnet" {
+  vpc_id                  = aws_vpc.main_vpc.id
+  cidr_block              = "10.0.2.0/24"
+  availability_zone       = "ap-southeast-1a"
+  map_public_ip_on_launch = false
+}
+
+# Private Subnet 생성 (추가된 AZ)
+resource "aws_subnet" "private_subnet_b" {
+  vpc_id                  = aws_vpc.main_vpc.id
+  cidr_block              = "10.0.3.0/24"
+  availability_zone       = "ap-southeast-1b"
+  map_public_ip_on_launch = false
+}
+
+# RDS 생성 (Single AZ 설정)
+resource "aws_db_instance" "iot_rds" {
+  identifier              = "iot-rds"
+  engine                  = "mysql"
+  engine_version          = "8.0.39"
+  instance_class          = "db.t3.micro"
+  allocated_storage       = 20
+  username                = "admin"
+  password                = "securepassword123"
+  vpc_security_group_ids  = [aws_security_group.rds_sg.id]
+  db_subnet_group_name    = aws_db_subnet_group.iot_db_subnet_group.name
+  multi_az                = false  # Multi-AZ 비활성화
+  skip_final_snapshot     = true
+}
+
+# DB 서브넷 그룹 (두 개의 AZ 포함)
+resource "aws_db_subnet_group" "iot_db_subnet_group" {
+  name       = "iot-db-subnet-group"
+  subnet_ids = [
+    aws_subnet.private_subnet.id,    # ap-southeast-1a
+    aws_subnet.private_subnet_b.id  # ap-southeast-1b (다른 AZ)
+  ]
+}
+
 # 네트워크 로드 밸런서 생성
 resource "aws_lb" "nlb" {
   name               = "iot-nlb"
@@ -132,20 +172,29 @@ resource "aws_lb_target_group_attachment" "nlb_target_group_attachment" {
   target_id        = aws_instance.iot_instance.id
 }
 
-# EC2 인스턴스 생성
+# EC2 (Private Subnet)
 resource "aws_instance" "iot_instance" {
-  ami           = "ami-047126e50991d067b" # Ubuntu 20.04 LTS
-  instance_type = "t2.micro"
-  key_name      = aws_key_pair.ec2_key_pair.key_name 
-  vpc_security_group_ids = [aws_security_group.ec2_sg.id]
-  subnet_id     = aws_subnet.subnet_a.id
+  ami                         = "ami-047126e50991d067b"
+  instance_type               = "t2.micro"
+  key_name                    = aws_key_pair.ec2_key_pair.key_name
+  vpc_security_group_ids      = [aws_security_group.ec2_sg.id]
+  subnet_id                   = aws_subnet.private_subnet.id  # Private Subnet
 }
 
-# 보안 그룹 생성
-resource "aws_security_group" "ec2_sg" {
-  vpc_id      = aws_vpc.main_vpc.id # 보안 그룹이 VPC에 연결되도록 설정
-  name        = "ec2-security-group"
-  description = "Allow SSH and TCP traffic for EC2 instances"
+# Bastion Host (Public Subnet)
+resource "aws_instance" "bastion_host" {
+  ami                         = "ami-047126e50991d067b"
+  instance_type               = "t2.micro"
+  key_name                    = aws_key_pair.ec2_key_pair.key_name
+  vpc_security_group_ids      = [aws_security_group.bastion_sg.id]
+  subnet_id                   = aws_subnet.subnet_a.id  # Public Subnet
+}
+
+# Bastion Host 보안 그룹
+resource "aws_security_group" "bastion_sg" {
+  vpc_id      = aws_vpc.main_vpc.id
+  name        = "bastion-sg"
+  description = "Allow SSH to Bastion Host"
 
   ingress {
     from_port   = 22
@@ -154,11 +203,45 @@ resource "aws_security_group" "ec2_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  ingress {
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+resource "aws_security_group" "ec2_sg" {
+  vpc_id      = aws_vpc.main_vpc.id
+  name        = "ec2-security-group"
+  description = "Allow traffic only from Bastion Host"
+
+  ingress {
+    from_port       = 22
+    to_port         = 22
+    protocol        = "tcp"
+    security_groups = [aws_security_group.bastion_sg.id] # Bastion Host에서만 SSH 허용
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"] # 모든 출력 허용
+  }
+}
+
+# RDS 보안 그룹 생성
+resource "aws_security_group" "rds_sg" {
+  vpc_id      = aws_vpc.main_vpc.id
+  name        = "rds-sg"
+  description = "Allow access to RDS from the private subnet"
+
+  ingress {
+    from_port   = 3306
+    to_port     = 3306
+    protocol    = "tcp"
+    cidr_blocks = [aws_subnet.private_subnet.cidr_block]
   }
 
   egress {
