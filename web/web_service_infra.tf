@@ -456,6 +456,13 @@ resource "aws_lb" "web_servcer_loadbalancer" {
   load_balancer_type = "application"
   security_groups    = [aws_security_group.web_alb_sg.id]
   subnets            = [for subnet in aws_subnet.public_elb_subnet : subnet.id]
+
+  access_logs {
+    enabled = true
+    bucket = ""
+    prefix = "logs/alb/"
+  }
+
 }
 
 # /*
@@ -477,7 +484,25 @@ resource "aws_lb_listener" "http" {
   auto scaling 설정
 
 */
+resource "aws_autoscaling_group" "web_service_autoscaling_group" {
+  name = "web-service-asg"
+  max_size = 4
+  min_size = 2
+  vpc_zone_identifier = [ for subnet in aws_subnet.private_web_subnet : subnet.id]
+  
 
+  launch_template {
+    id = aws_launch_template.web_service_launch_config.id
+    version = "$Latest"
+  }
+
+  instance_refresh {
+    strategy = "Rolling"
+    preferences {
+      min_healthy_percentage = 60
+    }
+  }
+}
 /*
   보안 기능 코드 블록
 */
@@ -488,10 +513,12 @@ resource "aws_lb_listener" "http" {
 */
 resource "aws_s3_bucket" "waf_log_storage" {
   bucket = "web-waf-logs-bucket"
+  force_destroy =  true
 }
 
 resource "aws_s3_bucket" "cloudtrail_backup_storage" {
   bucket = "cloudtrail-backup-log"
+  force_destroy =  true
 }
 /*
  iam 계정생성 
@@ -544,27 +571,40 @@ resource "aws_iam_role_policy_attachment" "waf_log_role_policy_attachment" {
   depends_on = [ aws_iam_policy.waf_s3_log_policy, aws_iam_role.waf_log_role]
 }
 
-# 기본적으로 elb에는 standard aws_shield가 활성화되어 있음.
-# resource "aws_shield_protection" "web_alb_shield_protection" {
-#   name = "web-service-aws-shield"
-#   resource_arn = aws_lb.web_servcer_loadbalancer.arn
-
-#   tags = {
-#     "Name" = "web-elb-aws-shield"
-#   }
-#   depends_on = [ aws_lb.web_servcer_loadbalancer ]
-# }
-
-
 /*
  보안장비 instance code block
 
 */
 
-# resource "cloudtrail" "web_service_cloudtrail" {
-  
-# }
 
+resource "aws_cloudwatch_log_group" "web_service_loadbalancer" {
+  name = "web-loadbalancer-watch"
+  tags = {
+    Application = "Web"
+    Location = "alb"
+  }
+}
+
+/*
+  cloudtrail 설정
+*/
+
+# resource "aws_cloudtrail" "web_service_cloudtrail" {
+#   name = ""
+  
+#   s3_bucket_name = aws_s3_bucket.cloudtrail_backup_storage.id
+#   s3_key_prefix = "prefix"
+#   include_global_service_events = false
+
+# }
+/*
+  guard duty 옵션
+*/
+
+resource "aws_guardduty_detector" "web_service_guardduty_config" {
+  enable =  true  
+  finding_publishing_frequency = "ONE_HOUR"
+}
 
 resource "aws_wafv2_web_acl" "web_acl" {
   name ="web-acl-for-alb"
@@ -598,9 +638,27 @@ resource "aws_wafv2_web_acl_logging_configuration" "waf_logging_acl_configure" {
 
 
 /*
-
+  route 53
 
 */
+
+# resource "aws_route53_zone" "web_service_domain" {
+#   name = "atev22.click."
+# }
+
+# resource "aws_route53_record" "www" {
+#   zone_id = aws_route53_zone.web_service_domain.id 
+#   name = "www"
+#   type ="A"
+#   alias {
+#     name = aws_lb.web_servcer_loadbalancer.dns_name
+#     zone_id = aws_lb.web_servcer_loadbalancer.zone_id
+#     evaluate_target_health = true
+#   } 
+# }
+
+
+
 
 output "aws_bastion_public_ip" {
   value = aws_instance.bastion_host.public_ip
