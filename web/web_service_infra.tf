@@ -1,8 +1,8 @@
 provider "aws" {
-  profile = "terraform-user"
+  profile = "terraform-user"  
 }
 
-/*
+/*d
 va
 */
 data "aws_availability_zones" "available" {
@@ -98,23 +98,13 @@ resource "aws_network_acl" "web_nat_gateway_nacl" {
   vpc_id = aws_vpc.web_vpc.id
 
   ingress {
-    rule_no    = 100
-    protocol   = "tcp"
-    from_port  = 80
-    to_port    = 80
+    rule_no = 100
+    protocol = "tcp"
+    from_port = 1024
+    to_port = 65534
     cidr_block = "0.0.0.0/0"
-    action     = "allow"
+    action = "allow"
   }
-
-  ingress {
-    rule_no    = 110
-    protocol   = "tcp"
-    from_port  = 443
-    to_port    = 443
-    cidr_block = "0.0.0.0/0"
-    action     = "allow"
-  }
-
   egress {
     rule_no    = 100
     protocol   = "-1"
@@ -243,6 +233,13 @@ resource "aws_security_group" "http_open" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  ingress {
+    from_port = 8080
+    to_port = 8080
+    protocol = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
   egress {
     from_port   = 0
     to_port     = 0
@@ -314,7 +311,7 @@ resource "aws_instance" "bastion_host" {
 
 resource "aws_instance" "aws_web_servers" {
   count           = (length(aws_subnet.private_web_subnet))
-  ami             = "ami-040c33c6a51fd5d96"
+  ami             = "ami-0b793e03812de20d6"
   instance_type   = "t3.small"
   subnet_id       = aws_subnet.private_web_subnet[count.index].id
   key_name        = "public-ec2-key"
@@ -398,14 +395,14 @@ resource "aws_db_instance" "aws_read_replica_db_server" {
 
 resource "aws_lb_target_group" "web_server_loadbalancer_tg" {
   name     = "web-service-loadbalancer-tg"
-  port     = 80
+  port     = 8080
   protocol = "HTTP"
   vpc_id   = aws_vpc.web_vpc.id
   
   health_check {
     protocol = "HTTP"
     path = "/"
-    port = "80"
+    port = "8080"
     interval = 30
     timeout = 5
     healthy_threshold = 3
@@ -436,6 +433,13 @@ resource "aws_security_group" "web_alb_sg" {
   }
 
   ingress {
+    from_port = 8080
+    to_port = 8080
+    protocol = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
     from_port   = 443
     to_port     = 443
     protocol    = "tcp"
@@ -447,7 +451,7 @@ resource "aws_lb_target_group_attachment" "regist_web_instance" {
   count            = length(aws_instance.aws_web_servers[*])
   target_group_arn = aws_lb_target_group.web_server_loadbalancer_tg.arn
   target_id        = aws_instance.aws_web_servers[count.index].id
-  port             = 80
+  port             = 8080
 }
 
 # /*
@@ -460,52 +464,45 @@ resource "aws_lb" "web_servcer_loadbalancer" {
   security_groups    = [aws_security_group.web_alb_sg.id]
   subnets            = [for subnet in aws_subnet.public_elb_subnet : subnet.id]
 
-  access_logs {
-    enabled = true
-    bucket = ""
-    prefix = "logs/alb/"
-  }
+  # access_logs {
+  #   enabled = true
+  #   bucket = ""
+  #   prefix = "logs/alb/"
+  # }
 
 }
 
 # /*
 #   load balancer와 연결 설정
 # */
-
-resource "aws_lb_listener" "http" {
+resource "aws_lb_listener" "http80" {
   load_balancer_arn = aws_lb.web_servcer_loadbalancer.arn
   port              = "80"
   protocol          = "HTTP"
 
   default_action {
-    type             = "forward"
+    type             = "redirect"
+   redirect {
+      protocol     = "HTTPS"
+      port         = "443"
+      status_code  = "HTTP_301"  # 영구적 리다이렉션
+    }
+  }
+}
+
+resource "aws_lb_listener" "https_listener" {
+  load_balancer_arn = aws_lb.web_servcer_loadbalancer.arn
+  port              = 443
+  protocol          = "HTTPS"
+  ssl_policy        = "ELBSecurityPolicy-2016-08"
+  certificate_arn = "arn:aws:acm:ap-northeast-2:137068221242:certificate/6c16204a-7dd0-49f3-8bec-581638bf72b9"
+  
+  default_action {
+    type = "forward"
     target_group_arn = aws_lb_target_group.web_server_loadbalancer_tg.arn
   }
 }
 
-/*
-  auto scaling 설정
-
-*/
-resource "aws_autoscaling_group" "web_service_autoscaling_group" {
-  name = "web-service-asg"
-  max_size = 4
-  min_size = 2
-  vpc_zone_identifier = [ for subnet in aws_subnet.private_web_subnet : subnet.id]
-  
-
-  launch_template {
-    id = aws_launch_template.web_service_launch_config.id
-    version = "$Latest"
-  }
-
-  instance_refresh {
-    strategy = "Rolling"
-    preferences {
-      min_healthy_percentage = 60
-    }
-  }
-}
 /*
   보안 기능 코드 블록
 */
@@ -516,12 +513,12 @@ resource "aws_autoscaling_group" "web_service_autoscaling_group" {
 */
 resource "aws_s3_bucket" "waf_log_storage" {
   bucket = "aws-waf-logs-web-service-team-logs-bucket"
-  force_destroy = true
+  # force_destroy = true
 }
 
 resource "aws_s3_bucket" "cloudtrail_backup_storage" {
   bucket = "cloudtrail-backup-log"
-  force_destroy = true
+  # force_destroy = true
 }
 /*
  iam 계정생성 
@@ -595,14 +592,12 @@ resource "aws_cloudwatch_log_group" "web_service_loadbalancer" {
   cloudtrail 설정
 */
 
-# resource "aws_cloudtrail" "web_service_cloudtrail" {
-#   name = ""
-  
-#   s3_bucket_name = aws_s3_bucket.cloudtrail_backup_storage.id
-#   s3_key_prefix = "prefix"
-#   include_global_service_events = false
 
-# }
+
+
+
+
+
 /*
   guard duty 옵션
 */
@@ -646,7 +641,7 @@ resource "aws_wafv2_web_acl_logging_configuration" "waf_logging_acl_configure" {
 
 
 /*
-  auto scaling 설정 코드 블록
+  auto scaling config
 
 */
 
@@ -656,11 +651,16 @@ resource "aws_launch_template" "web_service_launch_config" {
   key_name = "public-ec2-key"
 
   network_interfaces {
-    security_groups = [aws_security_group.icmpopen.id, aws_security_group.public_bastion_host_sg.id, aws_security_group.http_open.id, aws_security_group.https_open.id]
+    security_groups = [
+    aws_security_group.icmpopen.id, 
+    aws_security_group.public_bastion_host_sg.id, 
+    aws_security_group.http_open.id, 
+    aws_security_group.https_open.id
+    ]
   }
 
   tags ={
-    "Name" = "web-service-ec2-instance"
+    "Name" = "autoscaling-webservice-ec2-tg"
   }
 }
 
@@ -686,6 +686,14 @@ resource "aws_autoscaling_group" "web_service_autoscaling_group" {
       min_healthy_percentage = 60
     }
   }
+
+  tag {
+      key                 = "Name"
+      value               = "web-service-instance-autoscaling"
+      propagate_at_launch = true
+    }
+  
+
 }
 
 /*
@@ -694,20 +702,22 @@ resource "aws_autoscaling_group" "web_service_autoscaling_group" {
 
 */
 
-# resource "aws_route53_zone" "web_service_domain" {
-#   name = "atev22.click."
-# }
+data "aws_route53_zone" "web_service_domain" {
+  name = "atev22.click"
+  
+}
 
-# resource "aws_route53_record" "www" {
-#   zone_id = aws_route53_zone.web_service_domain.id 
-#   name = "www"
-#   type ="A"
-#   alias {
-#     name = aws_lb.web_servcer_loadbalancer.dns_name
-#     zone_id = aws_lb.web_servcer_loadbalancer.zone_id
-#     evaluate_target_health = true
-#   } 
-# }
+resource "aws_route53_record" "www" {
+  zone_id = data.aws_route53_zone.web_service_domain.id 
+  name = "www"
+  type ="A"
+  
+  alias {
+    name = aws_lb.web_servcer_loadbalancer.dns_name
+    zone_id = aws_lb.web_servcer_loadbalancer.zone_id
+    evaluate_target_health = true
+  } 
+}
 
 
 
@@ -715,3 +725,4 @@ resource "aws_autoscaling_group" "web_service_autoscaling_group" {
 output "aws_bastion_public_ip" {
   value = aws_instance.bastion_host.public_ip
 }
+
