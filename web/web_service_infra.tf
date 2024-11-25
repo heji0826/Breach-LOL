@@ -485,11 +485,11 @@ resource "aws_lb" "web_servcer_loadbalancer" {
   security_groups    = [aws_security_group.web_alb_sg.id]
   subnets            = [for subnet in aws_subnet.public_elb_subnet : subnet.id]
 
-  # access_logs {
-  #   enabled = true
-  #   bucket = ""
-  #   prefix = "logs/alb/"
-  # }
+  access_logs {
+    enabled = true
+    bucket = "lb-watchlogs-storage"
+    prefix = "alb-log/access"
+  }
 
 }
 
@@ -544,6 +544,10 @@ resource "aws_s3_bucket" "waf_log_storage" {
 resource "aws_s3_bucket" "cloudtrail_backup_storage" {
   bucket = "cloudtrail-backup-log"
   # force_destroy = true
+}
+
+resource "aws_s3_bucket" "loadbalancer_watchlogs_storage" {
+  bucket = "lb-watchlogs-storage"
 }
 /*
  iam 계정생성 
@@ -612,6 +616,7 @@ resource "aws_cloudwatch_log_group" "web_service_loadbalancer" {
     Location = "alb"
   }
 }
+
 
 /*
   cloudtrail 설정
