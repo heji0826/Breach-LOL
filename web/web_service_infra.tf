@@ -355,6 +355,7 @@ resource "aws_db_instance" "web_primary_db_server" {
   instance_class            = "db.t3.micro"
   username                  = "admin"
   password                  = "SecurePssw0rd"
+  vpc_security_group_ids = [aws_security_group.rds_sg.id]
   db_subnet_group_name      = aws_db_subnet_group.web_db_master_subnet_group.id
   publicly_accessible       = false
   backup_retention_period   = 7
@@ -414,6 +415,26 @@ resource "aws_lb_target_group" "web_server_loadbalancer_tg" {
 /*
  load balancer security group
 */
+
+resource "aws_security_group" "rds_sg" {
+  name = "rds-security-group"
+  vpc_id =  aws_vpc.web_vpc.id
+
+  ingress {
+    from_port = 3306
+    to_port = 3306
+    protocol = "tcp"
+    cidr_blocks = ["192.168.0.0/16"]
+  }
+
+  egress {
+    from_port = 0
+    to_port = 0
+    protocol = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+}
 
 resource "aws_security_group" "web_alb_sg" {
   vpc_id = aws_vpc.web_vpc.id
