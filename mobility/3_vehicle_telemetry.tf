@@ -18,6 +18,8 @@ resource "aws_sns_topic" "vehicle_telemetry_sns" {
 
 # IoT Topic Rule (Telemetry)
 resource "aws_iot_topic_rule" "vehicle_telemetry_topic_rule" {
+  depends_on = [aws_iam_role.waf_log_role]
+  
   name        = "vehicle_telemetry_topic_rule"
   sql         = "SELECT * FROM 'vehicle/telemetry'"
   sql_version = "2016-03-23"
@@ -25,27 +27,52 @@ resource "aws_iot_topic_rule" "vehicle_telemetry_topic_rule" {
 
   sns {
     target_arn = aws_sns_topic.vehicle_telemetry_sns.arn
-    role_arn   = aws_iam_role.iot_role.arn  # IAM 역할을 사용
+    role_arn   = aws_iam_role.waf_log_role.arn
   }
 }
 
 # IAM 역할 생성
-resource "aws_iam_role" "iot_role" {
-  name               = "IoTRole"
-  assume_role_policy = data.aws_iam_policy_document.iot_trust_policy.json
+resource "aws_iam_role" "waf_log_role" {
+  name = "waf-log-role-mobility"
+
+  assume_role_policy = <<POLICY
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Action": "sts:AssumeRole",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "iot.amazonaws.com"
+      }
+    }
+  ]
+}
+POLICY
 }
 
 # IAM 역할 정책 생성
-resource "aws_iam_policy" "iot_policy" {
-  name        = "IoTPolicy"
-  description = "Policy to allow IoT service to publish to SNS topics"
-  policy      = data.aws_iam_policy_document.iot_policy.json
+resource "aws_iam_policy" "waf_s3_log_policy" {
+  name        = "WAF-S3-Log-Policy-mobility"
+  description = "Allow WAF to write logs to S3"
+  policy      = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Action   = "s3:PutObject",
+        Effect   = "Allow",
+        Resource = "${aws_s3_bucket.waf_log_storage.arn}/*"
+      }
+    ]
+  })
 }
 
-# IAM 역할에 정책 연결
-resource "aws_iam_role_policy_attachment" "iot_policy_attachment" {
-  role       = aws_iam_role.iot_role.name
-  policy_arn = aws_iam_policy.iot_policy.arn
+# IoT 역할에 S3 정책 연결
+resource "aws_iam_role_policy_attachment" "s3_policy_attachment" {
+  role       = aws_iam_role.waf_log_role.name
+  policy_arn = aws_iam_policy.waf_s3_log_policy.arn
+
+  depends_on = [aws_iam_policy.waf_s3_log_policy , aws_iam_role.waf_log_role]
 }
 
 # 신뢰 정책: IoT 서비스가 역할을 사용할 수 있도록 설정
@@ -243,36 +270,9 @@ resource "aws_msk_cluster" "vehicle_kafka" {
 }
 
 # S3 버킷 생성 (Telemetry 데이터 저장용)
-resource "aws_s3_bucket" "vehicle_telemetry_bucket" {
-  bucket = "vehicle-telemetry-bucket"  # 고유한 버킷 이름 필요
-
-  tags = {
-    Name        = "Vehicle Telemetry Bucket"
-    Environment = "Production"
-  }
-}
-
-# S3 버킷에 파일 업로드를 위한 IAM 정책 생성
-resource "aws_iam_policy" "s3_policy" {
-  name        = "S3Policy"
-  description = "Policy to allow writing telemetry data to S3"
-  policy      = data.aws_iam_policy_document.s3_policy.json
-}
-
-# S3 버킷에 대한 IAM 정책 문서
-data "aws_iam_policy_document" "s3_policy" {
-  statement {
-    actions   = ["s3:PutObject"]
-    resources = [
-      "${aws_s3_bucket.vehicle_telemetry_bucket.arn}/*"  # 버킷 내 모든 객체에 대해 PutObject 권한
-    ]
-  }
-}
-
-# IoT 역할에 S3 정책 연결
-resource "aws_iam_role_policy_attachment" "s3_policy_attachment" {
-  role       = aws_iam_role.iot_role.name
-  policy_arn = aws_iam_policy.s3_policy.arn
+resource "aws_s3_bucket" "waf_log_storage" {
+  bucket = "aws-waf-logs-mobility-service-bucket"
+  force_destroy = true
 }
 
 # API Gateway 리소스 및 메서드 설정 (Telemetry API)
@@ -287,6 +287,7 @@ resource "aws_api_gateway_resource" "vehicle_resource" {
   path_part   = "telemetry"
 }
 
+# API Gateway 메서드 설정
 resource "aws_api_gateway_method" "vehicle_method" {
   rest_api_id   = aws_api_gateway_rest_api.vehicle_api.id
   resource_id   = aws_api_gateway_resource.vehicle_resource.id
@@ -294,24 +295,25 @@ resource "aws_api_gateway_method" "vehicle_method" {
   authorization = "NONE"
 }
 
-# Mock Integration 설정
-resource "aws_api_gateway_integration" "mock_integration" {
+# API Gateway Integration 설정 (MOCK 통합)
+resource "aws_api_gateway_integration" "vehicle_integration" {
   rest_api_id             = aws_api_gateway_rest_api.vehicle_api.id
   resource_id             = aws_api_gateway_resource.vehicle_resource.id
-  http_method             = aws_api_gateway_method.vehicle_method.http_method
-  integration_http_method = "POST"
+  http_method             = aws_api_gateway_method.vehicle_method.http_method  # 연결된 메서드와 일치해야 함
+  integration_http_method = "POST"  # MOCK의 경우 무시되지만 POST로 설정
   type                    = "MOCK"
 }
-
 # 새로운 배포 리소스
 resource "aws_api_gateway_deployment" "new_deployment" {
   rest_api_id = aws_api_gateway_rest_api.vehicle_api.id
 
   triggers = {
-    redeploy = "${timestamp()}"
+    redeploy = "${timestamp()}"  # 변경 시 강제로 배포
   }
 
-  depends_on = [aws_api_gateway_integration.mock_integration]  # Integration이 완료된 후 배포 진행
+  depends_on = [
+    aws_api_gateway_integration.vehicle_integration  # 통합 리소스가 완료된 후에만 실행
+  ]
 }
 
 # WAF v2 Web ACL 생성
@@ -391,10 +393,27 @@ resource "aws_api_gateway_stage" "vehicle_stage" {
   stage_name    = "prod"
   deployment_id = aws_api_gateway_deployment.new_deployment.id
   rest_api_id   = aws_api_gateway_rest_api.vehicle_api.id
+
+  depends_on = [
+    aws_api_gateway_deployment.new_deployment
+  ]
 }
 
 # WAF와 API Gateway 연동
 resource "aws_wafv2_web_acl_association" "vehicle_waf_association" {
   resource_arn = aws_api_gateway_stage.vehicle_stage.arn  # API Gateway 스테이지 ARN
   web_acl_arn  = aws_wafv2_web_acl.vehicle_waf_acl.arn
+}
+
+resource "aws_wafv2_web_acl_logging_configuration" "waf_logging_acl_configure" {
+  log_destination_configs = [aws_s3_bucket.waf_log_storage.arn]  # 버킷 ARN
+  resource_arn            = aws_wafv2_web_acl.vehicle_waf_acl.arn
+
+  redacted_fields {
+    single_header {
+      name = "user-agent"
+    }
+  }
+
+  depends_on = [aws_s3_bucket.waf_log_storage]
 }
