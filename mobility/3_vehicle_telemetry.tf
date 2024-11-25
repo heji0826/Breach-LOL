@@ -169,24 +169,23 @@ resource "aws_instance" "vehicle_ec2" {
 
 # VPC 생성
 resource "aws_vpc" "main_vpc" {
-  cidr_block = "10.0.0.0/16"
+  cidr_block           = "10.0.0.0/16"
+  enable_dns_support   = true
+  enable_dns_hostnames = true
 }
-
-# 가용 영역 조회
-data "aws_availability_zones" "available" {}
 
 # 서브넷 생성 (자동으로 가용 영역을 설정)
 resource "aws_subnet" "subnet_a" {
   vpc_id                  = aws_vpc.main_vpc.id
   cidr_block              = "10.0.1.0/24"
-  availability_zone       = data.aws_availability_zones.available.names[0]  # 첫 번째 가용 영역
+  availability_zone       = "ap-southeast-1a"  # 첫 번째 가용 영역
   map_public_ip_on_launch = true
 }
 
 resource "aws_subnet" "subnet_b" {
   vpc_id                  = aws_vpc.main_vpc.id
   cidr_block              = "10.0.2.0/24"
-  availability_zone       = data.aws_availability_zones.available.names[1]  # 두 번째 가용 영역
+  availability_zone       = "ap-southeast-1b"  # 두 번째 가용 영역
   map_public_ip_on_launch = true
 }
 
@@ -194,14 +193,14 @@ resource "aws_subnet" "subnet_b" {
 resource "aws_subnet" "private_subnet_a" {
   vpc_id                  = aws_vpc.main_vpc.id
   cidr_block              = "10.0.3.0/24"
-  availability_zone       = data.aws_availability_zones.available.names[0]
+  availability_zone       = "ap-southeast-1a"
   map_public_ip_on_launch = false
 }
 
 resource "aws_subnet" "private_subnet_b" {
   vpc_id                  = aws_vpc.main_vpc.id
   cidr_block              = "10.0.4.0/24"
-  availability_zone       = data.aws_availability_zones.available.names[1]
+  availability_zone       = "ap-southeast-1b"
   map_public_ip_on_launch = false
 }
 
