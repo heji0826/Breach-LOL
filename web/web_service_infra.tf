@@ -564,6 +564,20 @@ resource "aws_s3_bucket" "loadbalancer_watchlogs_storage" {
 }
 
 /*
+  s3 bucket 설정
+*/
+
+resource "aws_s3_bucket_public_access_block" "web_alb_public_access" {
+  bucket = aws_s3_bucket.loadbalancer_watchlogs_storage.id 
+
+  block_public_acls = false
+  block_public_policy = false
+  ignore_public_acls = false
+  restrict_public_buckets = false
+}
+
+
+/*
  iam 계정생성 
 */
 
@@ -618,13 +632,19 @@ resource "aws_s3_bucket_policy" "logs_prod_policy" {
       "Principal": {
         "AWS": "arn:aws:iam::600734575887:root"
       },
-      "Action": "s3:PutObject",
+      "Action": [
+        "s3:PutObject",
+        "s3:GetObject"
+      ],
       "Resource": "arn:aws:s3:::lb-watchlogs-storage/alb/AWSLogs/137068221242/*"
     }
   ]
 }
 POLICY
 }
+
+
+
 /*
   정책 연결
 */
