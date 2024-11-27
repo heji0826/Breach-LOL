@@ -243,9 +243,9 @@ resource "aws_security_group" "WAN_USER_public_sg" {
   vpc_id      = aws_vpc.LAN_vpc.id
 
   ingress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
   
@@ -267,10 +267,10 @@ resource "aws_security_group" "LAN_USER_private_sg" {
   vpc_id      = aws_vpc.LAN_vpc.id
 
   ingress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    security_groups = [aws_security_group.WAN_USER_public_sg.id]
   }
   
   egress {
