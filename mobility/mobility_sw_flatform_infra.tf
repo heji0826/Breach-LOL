@@ -8,7 +8,7 @@ terraform {
 }
 
 provider "aws" {
-  profile = "ChoiHyunseob"
+  profile = "hyeji"
   region = "ap-northeast-2"
 }
 
@@ -263,7 +263,7 @@ resource "aws_subnet" "private_subnet_d" {
 resource "aws_subnet" "public_subnet" {
   vpc_id                  = aws_vpc.main_vpc.id
   cidr_block              = "10.0.8.0/24"
-  availability_zone       = "ap-northeast-2c"
+  availability_zone       = "ap-northeast-2a"
   map_public_ip_on_launch = true
   tags = {
     Name = "Public-Subnet"
@@ -373,7 +373,7 @@ resource "aws_db_instance" "rds_command" {
   db_name                = "commanddb"
   username               = "admin"
   password               = "password123"
-  vpc_security_group_ids = [aws_security_group.common_sg.id]
+  vpc_security_group_ids = [aws_security_group.rds_sg.id]
   db_subnet_group_name   = aws_db_subnet_group.main.name
   skip_final_snapshot    = true
   multi_az               = false
@@ -390,7 +390,7 @@ resource "aws_db_instance" "rds_critical" {
   db_name                = "criticaldb"
   username               = "admin"
   password               = "password123"
-  vpc_security_group_ids = [aws_security_group.common_sg.id]
+  vpc_security_group_ids = [aws_security_group.rds_sg.id]
   db_subnet_group_name   = aws_db_subnet_group.main.name
   skip_final_snapshot    = true
   multi_az               = false
@@ -405,7 +405,7 @@ resource "aws_instance" "ec2_command" {
   ami                         = "ami-040c33c6a51fd5d96"
   instance_type               = "t3.micro"
   subnet_id                   = aws_subnet.private_subnet_1.id
-  vpc_security_group_ids      = [aws_security_group.common_sg.id]
+  vpc_security_group_ids      = [aws_security_group.ec2_sg.id]
   iam_instance_profile        = aws_iam_instance_profile.iot_instance_profile.name
   tags = {
     Name = "EC2-Command-Instance"
@@ -416,7 +416,7 @@ resource "aws_instance" "ec2_critical" {
   ami                         = "ami-040c33c6a51fd5d96"
   instance_type               = "t3.micro"
   subnet_id                   = aws_subnet.private_subnet_1.id
-  vpc_security_group_ids      = [aws_security_group.common_sg.id]
+  vpc_security_group_ids      = [aws_security_group.ec2_sg.id]
   iam_instance_profile        = aws_iam_instance_profile.iot_instance_profile.name
   tags = {
     Name = "EC2-Critical-Instance"
@@ -654,6 +654,68 @@ resource "aws_security_group" "common_sg" {
   }
 }
 
+# 게이트웨이 security group
+resource "aws_vpc_endpoint" "apigateway_vpc_endpoint" {
+  vpc_id              = aws_vpc.main_vpc.id
+  service_name        = "com.amazonaws.ap-northeast-2.execute-api"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = [
+    aws_subnet.public_subnet.id,
+    aws_subnet.private_subnet_1.id,
+    aws_subnet.private_subnet_2.id
+  ]
+  security_group_ids  = [aws_security_group.common_sg.id]
+  private_dns_enabled = false
+}
+
+resource "aws_api_gateway_vpc_link" "vpc_link" {
+  name = "apigateway-vpc-link"
+  target_arns = [
+    aws_vpc_endpoint.apigateway_vpc_endpoint.arn
+  ]
+}
+
+resource "aws_vpc_endpoint" "apigateway_vpc_endpoint_a" {
+  vpc_id              = aws_vpc.main_vpc.id
+  service_name        = "com.amazonaws.ap-northeast-2.execute-api"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = [
+    aws_subnet.subnet_a.id,
+    aws_subnet.private_subnet.id,
+    aws_subnet.private_subnet_b.id
+  ]
+  security_group_ids  = [aws_security_group.ec2_sg.id]
+  private_dns_enabled = false
+}
+
+resource "aws_api_gateway_vpc_link" "vpc_link_gateway_2" {
+  name = "apigateway-vpc-link-gateway-2"
+  target_arns = [
+    aws_vpc_endpoint.apigateway_vpc_endpoint_a.arn
+  ]
+}
+
+resource "aws_vpc_endpoint" "apigateway_vpc_endpoint_b" {
+  vpc_id              = aws_vpc.main_vpc.id
+  service_name        = "com.amazonaws.ap-northeast-2.execute-api"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = [
+    aws_subnet.subnet_c.id,
+    aws_subnet.subnet_d.id,
+    aws_subnet.private_subnet_c.id,
+    aws_subnet.private_subnet_d.id
+  ]
+  security_group_ids  = [aws_security_group.ec2_sg.id]
+  private_dns_enabled = false
+}
+
+resource "aws_api_gateway_vpc_link" "vpc_link_gateway_3" {
+  name = "apigateway-vpc-link-gateway-3"
+  target_arns = [
+    aws_vpc_endpoint.apigateway_vpc_endpoint_b.arn
+  ]
+}
+
 # 인터넷 게이트웨이 생성
 resource "aws_internet_gateway" "main_igw" {
   vpc_id = aws_vpc.main_vpc.id
@@ -865,6 +927,8 @@ resource "aws_api_gateway_integration" "iot_integration" {
   integration_http_method = "POST"
   type                    = "HTTP"
   uri                     = "http://your-backend-endpoint.example.com"
+  connection_type         = "VPC_LINK"
+  connection_id           = aws_api_gateway_vpc_link.vpc_link_gateway_2.id
 }
 
 # API Gateway Integration 설정 (MOCK 통합)
@@ -874,6 +938,8 @@ resource "aws_api_gateway_integration" "vehicle_integration" {
   http_method             = aws_api_gateway_method.vehicle_method.http_method  # 연결된 메서드와 일치해야 함
   integration_http_method = "POST"  # MOCK의 경우 무시되지만 POST로 설정
   type                    = "MOCK"
+  connection_type         = "VPC_LINK"
+  connection_id           = aws_api_gateway_vpc_link.vpc_link_gateway_3.id
 }
 
 resource "aws_api_gateway_integration" "command" {
@@ -883,6 +949,8 @@ resource "aws_api_gateway_integration" "command" {
   integration_http_method = "POST"
   type                    = "HTTP"
   uri                     = "http://${aws_instance.ec2_command.private_ip}"
+  connection_type         = "VPC_LINK"
+  connection_id           = aws_api_gateway_vpc_link.vpc_link.id
 }
 
 resource "aws_api_gateway_integration" "critical" {
@@ -892,6 +960,8 @@ resource "aws_api_gateway_integration" "critical" {
   integration_http_method = "POST"
   type                    = "HTTP"
   uri                     = "http://${aws_instance.ec2_critical.private_ip}"
+  connection_type         = "VPC_LINK"
+  connection_id           = aws_api_gateway_vpc_link.vpc_link.id
 }
 
 output "firehose_arn" {
